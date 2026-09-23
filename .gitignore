@@ -1,0 +1,57 @@
+# ── Secrets / config ──────────────────────────────────────────────────────
+.env
+.env.local
+*.local
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtual environments ──────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Project data / caches ─────────────────────────────────────────────────
+.mir_cache/
+*.sqlite
+*.sqlite3
+*.db
+data/*.csv
+data/*.json
+audio/*.mp3
+audio/*.wav
+audio/*.m4a
+
+# ── OAuth tokens ──────────────────────────────────────────────────────────
+.spotify_cache
+.cache
+.strava_token_cache
+*token*.json
+
+# ── Editor / OS ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Added before first GitHub push ────────────────────────────────────────
+.spotify_token_cache
+*_token_cache
+pacesetter_model.pkl
+*.pkl
+*.course.json
+*.db-shm
+*.db-wal
+*.db-journal
