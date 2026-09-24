@@ -173,7 +173,8 @@ def _extract(y: np.ndarray, sr: int) -> AudioFeatures:
         if len(seg) < sr:
             continue
         tempo_est, beat_frames = librosa.beat.beat_track(y=seg, sr=sr)
-        tempos.append(float(tempo_est))
+        # Newer librosa returns tempo as a 1-element ndarray instead of a scalar.
+        tempos.append(float(np.atleast_1d(tempo_est)[0]))
 
     if not tempos:
         tempo, bpm_confidence = 120.0, 0.0

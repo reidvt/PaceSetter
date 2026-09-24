@@ -8,6 +8,8 @@ Commands:
   train     (Re)train the LinUCB bandit model from stored aligned data
   plan      Generate + optionally push a playlist for a planned course (GPX)
   stats     Model stats and top songs per terrain type
+  align     Re-align logged plays to runs (after analyze)
+  plays     Play-logger status and songs captured per run
 
 Quick start:
   cp .env.example .env                        # fill in your API keys
@@ -23,6 +25,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 # Windows consoles default to cp1252 and choke on the UI glyphs below.
 for _stream in (sys.stdout, sys.stderr):
@@ -37,9 +40,12 @@ try:
 except ImportError:
     pass
 
+from data import play_log
 from data.database import (
-    get_all_tracks_with_features, get_all_workouts, get_played_segments,
-    init_db, insert_played_segments, upsert_track, upsert_workout,
+    clear_played_segments, get_all_tracks_with_features, get_all_workouts,
+    get_play_log, get_played_segments, get_track, get_tracks_missing_features,
+    init_db, insert_played_segments, insert_plays, prune_play_log,
+    set_track_features, upsert_track, upsert_workout,
 )
 from data.map_client import MapClient
 from data.models import AudioFeatures, CourseSegment, Track
@@ -84,38 +90,18 @@ def cmd_sync(args) -> None:
         time.sleep(0.5)
 
     if not workouts:
-        print("  No valid workouts. Exiting."); return
+        print("  No new workouts from Strava.")
 
-    # ── Spotify: recently played ────────────────────────────────────────────
-    earliest   = min(wo.start_time for wo in workouts)
-    after_ms   = int(earliest.timestamp() * 1000) - 60_000
-    print("▶ Fetching Spotify recently played …")
-    played     = sp.fetch_recently_played(after_unix_ms=after_ms)
-    print(f"  {len(played)} plays found")
+    # ── Listening history → local play_log ────────────────────────────────
+    _collect_plays(sp)
 
-    # Build lightweight Track objects (no audio features yet — analyze does that)
-    tracks_by_id: dict[str, Track] = {}
-    for item in played:
-        raw = item["track"]
-        tid = raw["id"]
-        t = Track(
-            id=tid, name=raw["name"],
-            artist=", ".join(a["name"] for a in raw["artists"]),
-            album=raw["album"]["name"],
-            duration_ms=raw["duration_ms"],
-            preview_url=raw.get("preview_url"),
-        )
-        upsert_track(t)
-        tracks_by_id[tid] = t
+    # ── Alignment (re-run from the full play_log) ──────────────────────────
+    _align_from_play_log()
 
-    # ── Alignment ──────────────────────────────────────────────────────────
-    print("▶ Aligning music to workouts …")
-    # Alignment needs features for filtering; use a permissive pass here —
-    # features are checked again at training time.
-    segments = align_music_to_workouts(played, workouts, tracks_by_id)
-    print(f"  {len(segments)} aligned segment(s)")
-    if segments:
-        insert_played_segments(segments)
+    # ── Prune plays that didn't happen during a run ────────────────────────
+    removed = prune_play_log(get_all_workouts())
+    if removed:
+        print(f"  Pruned {removed} non-run play(s) older than 7 days")
 
     # ── Liked songs library ────────────────────────────────────────────────
     print("▶ Syncing liked songs …")
@@ -126,51 +112,232 @@ def cmd_sync(args) -> None:
     print("✓ Sync complete.  Next step:  python main.py analyze")
 
 
+def _collect_plays(sp: SpotifyClient) -> None:
+    """Pull plays from the cloud buffer (if configured) + Spotify directly."""
+    records: list[dict] = []
+    max_cloud_ms = None
+    if play_log.configured():
+        print("▶ Pulling plays from cloud logger …")
+        cloud = play_log.fetch_cloud_plays()
+        records.extend(cloud)
+        if cloud:
+            max_cloud_ms = max(play_log.played_at_ms(r["played_at"]) for r in cloud)
+        print(f"  {len(cloud)} buffered play(s)")
+    else:
+        print("  (cloud logger not configured — only the last 50 plays are available)")
+
+    print("▶ Fetching Spotify recently played …")
+    direct = [r for r in map(play_log.from_spotify_item, sp.fetch_recently_played(max_tracks=50)) if r]
+    records.extend(direct)
+
+    new = insert_plays(records)
+    print(f"  {new} new play(s) saved locally")
+
+    # Local copy is committed → clear the cloud buffer up to what we pulled.
+    if max_cloud_ms is not None:
+        purged = play_log.purge_cloud_plays(max_cloud_ms)
+        print(f"  Purged {purged} play(s) from cloud buffer")
+
+    # Make sure every played track exists in the tracks table (features come later).
+    for r in records:
+        upsert_track(Track(id=r["track_id"], name=r["name"], artist=r["artist"],
+                           album=r.get("album", ""), duration_ms=r["duration_ms"],
+                           isrc=r.get("isrc")))
+
+
+def _align_from_play_log() -> int:
+    print("▶ Aligning music to workouts …")
+    items = [play_log.to_spotify_item(r) for r in get_play_log()]
+    tracks_by_id = {t.id: t for t in get_all_tracks_with_features()}
+    segments = align_music_to_workouts(items, get_all_workouts(), tracks_by_id)
+    clear_played_segments()
+    if segments:
+        insert_played_segments(segments)
+    missing = len({i["track"]["id"] for i in items} - set(tracks_by_id))
+    print(f"  {len(segments)} aligned segment(s)"
+          + (f"  ({missing} played track(s) still need audio features)" if missing else ""))
+    return len(segments)
+
+
+def cmd_align(args) -> None:
+    init_db()
+    _align_from_play_log()
+
+
+def cmd_postrun(args) -> None:
+    """
+    One-shot post-run workflow: sync (last-50 Spotify plays + latest Strava
+    runs) → featurize only the newly-played tracks → re-align → flag
+    anything that looks off → retrain once there's enough data.
+
+    Run this right after finishing a run and uploading it to Strava.
+    Spotify only remembers your last 50 plays, so the sooner this runs,
+    the less likely later listening pushes today's songs out of that window.
+    """
+    print("═" * 60)
+    print("POST-RUN  ▸  sync → analyze (played tracks only) → align → train")
+    print("═" * 60)
+    cmd_sync(args)
+
+    print()
+    from data.feature_sources import fetch_features_for_tracks
+    played_ids = {r["track_id"] for r in get_play_log()}
+    tracks = [t for t in get_tracks_missing_features() if t.id in played_ids]
+    if tracks:
+        print(f"▶ Fetching audio features for {len(tracks)} newly-played track(s) …")
+        feats_map = fetch_features_for_tracks(tracks)
+        for track_id, feats in feats_map.items():
+            set_track_features(track_id, feats)
+        mismatches = sum(1 for f in feats_map.values() if f.tempo_agree is False)
+        print(f"  {len(feats_map)} / {len(tracks)} featured")
+        if mismatches:
+            print(f"  ⚠ {mismatches} track(s) had a tempo disagreement between sources "
+                  f"— worth a listen before trusting them in training.")
+    else:
+        print("  No newly-played tracks need features.")
+
+    print()
+    _align_from_play_log()
+    _check_latest_run()
+
+    raw = get_played_segments()
+    if len(raw) >= 20:
+        print()
+        cmd_train(args)
+    else:
+        print(f"\n  {len(raw)} aligned segment(s) total — "
+              f"{20 - len(raw)} more needed before gradient boosting kicks in.")
+
+
+def _check_latest_run() -> None:
+    """Coverage + tempo-sanity check on the most recently synced run."""
+    import json as _json
+
+    workouts = get_all_workouts()
+    if not workouts:
+        return
+    wo = max(workouts, key=lambda w: w.start_time)
+    log = get_play_log()
+    s, e = int(wo.start_time.timestamp() * 1000), int(wo.start_time.timestamp() * 1000) + wo.elapsed_sec * 1000
+    n_played = sum(1 for r in log if r["played_at_ms"] - r["duration_ms"] < e and r["played_at_ms"] > s)
+    expected = max(1, wo.elapsed_sec // 210)  # rough ~3.5 min/track
+
+    print(f"\n▶ Latest run: {wo.name} ({wo.start_time:%Y-%m-%d}, {wo.elapsed_sec // 60} min) "
+          f"— {n_played} play(s) captured")
+    if n_played < expected * 0.6:
+        print(f"  ⚠ that's fewer than the ~{expected} expected for a run this long. If you waited "
+              f"a while before running this, later listening may have pushed early songs out of "
+              f"Spotify's last-50-play window. Run `postrun` sooner next time.")
+
+    segs = sorted((r for r in get_played_segments() if r["workout_id"] == wo.id),
+                  key=lambda r: r["started_at"])
+    prev: Optional[tuple[str, float]] = None
+    for r in segs:
+        tempo = _json.loads(r["features_json"])["tempo"]
+        if prev is not None and abs(tempo - prev[1]) >= 35:
+            t1, t2 = get_track(prev[0]), get_track(r["track_id"])
+            n1 = f"{t1.artist} – {t1.name}" if t1 else prev[0]
+            n2 = f"{t2.artist} – {t2.name}" if t2 else r["track_id"]
+            print(f"  ⚠ tempo jump {prev[1]:.0f} → {tempo:.0f} BPM: \"{n1}\" → \"{n2}\" "
+                  f"— worth a manual listen (could be a bad reading, or a song from after "
+                  f"you finished bleeding into the window).")
+        prev = (r["track_id"], tempo)
+
+
+def cmd_plays(args) -> None:
+    init_db()
+    log = get_play_log()
+    wos = get_all_workouts()
+    print(f"Local play_log: {len(log)} play(s)")
+    if log:
+        print(f"  oldest {log[0]['played_at']}   newest {log[-1]['played_at']}")
+    if play_log.configured():
+        st = play_log.cloud_status()
+        print(f"Cloud buffer: {st.get('buffered_plays')} play(s), newest {st.get('newest')}")
+        if st.get("last_gap_ms"):
+            gap = datetime.fromtimestamp(int(st["last_gap_ms"]) / 1000)
+            print(f"  ⚠ possible gap in logging detected at {gap:%Y-%m-%d %H:%M}")
+    for w in sorted(wos, key=lambda w: w.start_time)[-5:]:
+        s = int(w.start_time.timestamp() * 1000)
+        e = s + w.elapsed_sec * 1000
+        n = sum(1 for r in log if r["played_at_ms"] - r["duration_ms"] < e and r["played_at_ms"] > s)
+        print(f"  {w.start_time:%Y-%m-%d} {w.name[:30]:30s} {w.elapsed_sec//60:4d} min  {n:3d} song(s)")
+
+
 # ─────────────────────────────────────────────
 # analyze  (MIR via librosa)
 # ─────────────────────────────────────────────
 
 def cmd_analyze(args) -> None:
     """
-    Download 30-second Spotify preview clips and extract audio features
-    using librosa.  This is the replacement for the deprecated /audio-features.
-    Results are cached in .mir_cache/ so tracks are only processed once.
+    Fetch audio features for every track that doesn't have them yet, via
+    the ReccoBeats + Deezer/iTunes hybrid pipeline (data/feature_sources.py).
+    ReccoBeats supplies energy/valence/danceability directly (no audio
+    needed); a Deezer or iTunes preview clip lets us cross-check tempo with
+    our own librosa extraction. See feature_sources.py for the merge policy.
+
+    --legacy falls back to the original librosa-on-Spotify-preview_url path
+    (kept for tracks that DO have a Spotify preview_url, which is now rare).
     """
-    try:
-        import librosa  # noqa: F401
-    except ImportError:
-        print("librosa not installed. Run:  pip install librosa soundfile")
-        sys.exit(1)
-
-    from audio.mir_engine import batch_analyse
-    from data.database import get_all_tracks_with_features, get_conn
-
     init_db()
 
-    # Load all tracks that have a preview_url but no features yet
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, preview_url FROM tracks "
-            "WHERE preview_url IS NOT NULL AND features_json IS NULL"
-        ).fetchall()
+    if args.legacy:
+        try:
+            import librosa  # noqa: F401
+        except ImportError:
+            print("librosa not installed. Run:  pip install librosa soundfile")
+            sys.exit(1)
 
-    if not rows:
-        print("  All tracks already analysed (or none have preview_url).")
+        from audio.mir_engine import batch_analyse
+        from data.database import get_conn
+
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, preview_url FROM tracks "
+                "WHERE preview_url IS NOT NULL AND features_json IS NULL"
+            ).fetchall()
+        if not rows:
+            print("  No tracks with a Spotify preview_url need analysis.")
+            return
+        print(f"▶ Analysing {len(rows)} tracks via librosa (Spotify preview URLs) …")
+        items = [(r["id"], r["preview_url"]) for r in rows]
+        feats_map = batch_analyse(items)
+        print(f"  {len(feats_map)} / {len(rows)} analysed successfully")
+        for track_id, feats in feats_map.items():
+            set_track_features(track_id, feats)
+        print("✓ Analysis complete.  Next step:  python main.py align")
         return
 
-    print(f"▶ Analysing {len(rows)} tracks via librosa (preview URLs) …")
-    items = [(r["id"], r["preview_url"]) for r in rows]
-    feats_map = batch_analyse(items)
-    print(f"  {len(feats_map)} / {len(rows)} analysed successfully")
+    from data.feature_sources import fetch_features_for_tracks
 
-    # Persist
+    tracks = get_tracks_missing_features()
+    if args.played_only:
+        played_ids = {r["track_id"] for r in get_play_log()}
+        tracks = [t for t in tracks if t.id in played_ids]
+    if args.limit:
+        tracks = tracks[: args.limit]
+    if not tracks:
+        print("  All tracks already have audio features."
+              if not args.played_only else
+              "  All played tracks already have audio features.")
+        return
+
+    print(f"▶ Fetching audio features for {len(tracks)} track(s) "
+          f"(ReccoBeats + Deezer/iTunes) …")
+    feats_map = fetch_features_for_tracks(tracks)
+
+    hybrid = sum(1 for f in feats_map.values() if f.source == "hybrid")
+    recco_only = sum(1 for f in feats_map.values() if f.source == "reccobeats")
+    librosa_only = sum(1 for f in feats_map.values() if f.source == "librosa")
+    mismatches = sum(1 for f in feats_map.values() if f.tempo_agree is False)
+    print(f"  {len(feats_map)} / {len(tracks)} featured "
+          f"(hybrid: {hybrid}, reccobeats-only: {recco_only}, librosa-only: {librosa_only})")
+    if mismatches:
+        print(f"  ⚠ {mismatches} track(s) had a tempo disagreement between "
+              f"ReccoBeats and librosa — worth a listen before training.")
+
     for track_id, feats in feats_map.items():
-        with get_conn() as conn:
-            import json
-            conn.execute(
-                "UPDATE tracks SET features_json=? WHERE id=?",
-                (json.dumps(feats.__dict__), track_id),
-            )
+        set_track_features(track_id, feats)
 
     # Optional: also scan a local music directory
     if args.local_dir:
@@ -179,7 +346,7 @@ def cmd_analyze(args) -> None:
         local_map = scan_local_library(ld)
         print(f"  Local library: {len(local_map)} files analysed")
 
-    print("✓ Analysis complete.  Next step:  python main.py train")
+    print("✓ Analysis complete.  Next step:  python main.py align")
 
 
 # ─────────────────────────────────────────────
@@ -375,8 +542,15 @@ def main() -> None:
 
     sub.add_parser("sync",  help="Sync Strava runs + Spotify history")
 
-    an = sub.add_parser("analyze", help="Run local MIR (librosa) on library preview clips")
+    an = sub.add_parser("analyze", help="Fetch audio features (ReccoBeats + Deezer/iTunes hybrid)")
+    an.add_argument("--limit", type=int, default=None,
+                     help="Only process the first N un-featured tracks (useful for a quick test)")
+    an.add_argument("--legacy", action="store_true",
+                     help="Use the old librosa-on-Spotify-preview_url path instead")
     an.add_argument("--local-dir", default="", help="Optional: path to a local music directory")
+    an.add_argument("--played-only", action="store_true",
+                     help="Only featurize tracks that were actually played during a run "
+                          "(play_log), instead of the whole liked-songs library")
 
     sub.add_parser("train", help="(Re)train the LinUCB bandit model")
 
@@ -390,10 +564,15 @@ def main() -> None:
     pl.add_argument("--no-cache", action="store_true", help="Ignore saved course cache, re-fetch elevation")
 
     sub.add_parser("stats", help="Model stats + top songs by terrain")
+    sub.add_parser("align", help="Re-align play_log to workouts (run after analyze)")
+    sub.add_parser("plays", help="Play-logger status and songs per recent run")
+    sub.add_parser("postrun", help="One-shot: sync + analyze --played-only + align + train. "
+                                    "Run this right after finishing a run.")
 
     args = p.parse_args()
     {"sync": cmd_sync, "analyze": cmd_analyze,
-     "train": cmd_train, "plan": cmd_plan, "stats": cmd_stats}[args.cmd](args)
+     "train": cmd_train, "plan": cmd_plan, "stats": cmd_stats,
+     "align": cmd_align, "plays": cmd_plays, "postrun": cmd_postrun}[args.cmd](args)
 
 
 if __name__ == "__main__":

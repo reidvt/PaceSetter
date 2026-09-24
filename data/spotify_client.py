@@ -148,6 +148,7 @@ class SpotifyClient:
                     album=t["album"]["name"],
                     duration_ms=t["duration_ms"],
                     preview_url=preview,
+                    isrc=(t.get("external_ids") or {}).get("isrc"),
                 ))
             offset += batch
             time.sleep(0.15)

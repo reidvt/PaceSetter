@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     album        TEXT NOT NULL,
     duration_ms  INTEGER,
     features_json TEXT,        -- serialised AudioFeatures or NULL
-    preview_url  TEXT
+    preview_url  TEXT,
+    isrc         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workouts (
@@ -62,6 +63,21 @@ CREATE TABLE IF NOT EXISTS played_segments (
 
 CREATE INDEX IF NOT EXISTS idx_ps_workout ON played_segments(workout_id);
 CREATE INDEX IF NOT EXISTS idx_ps_track   ON played_segments(track_id);
+
+-- Raw listening log (from the cloud play logger + direct Spotify pulls).
+-- Pruned to plays that overlap a run; see prune_play_log().
+CREATE TABLE IF NOT EXISTS play_log (
+    track_id     TEXT NOT NULL,
+    played_at    TEXT NOT NULL,   -- ISO-8601 UTC, when the track ENDED
+    played_at_ms INTEGER NOT NULL,
+    duration_ms  INTEGER NOT NULL,
+    name         TEXT,
+    artist       TEXT,
+    album        TEXT,
+    isrc         TEXT,
+    PRIMARY KEY (track_id, played_at)
+);
+CREATE INDEX IF NOT EXISTS idx_pl_time ON play_log(played_at_ms);
 """
 
 
@@ -79,6 +95,16 @@ def get_conn(path: Path = DB_PATH) -> Generator[sqlite3.Connection, None, None]:
 def init_db(path: Path = DB_PATH) -> None:
     with get_conn(path) as conn:
         conn.executescript(DDL)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Lightweight column migrations for existing databases (no migration
+    framework — the schema is small and CREATE TABLE IF NOT EXISTS doesn't
+    add new columns to a table that already exists)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tracks)").fetchall()}
+    if "isrc" not in cols:
+        conn.execute("ALTER TABLE tracks ADD COLUMN isrc TEXT")
 
 
 # ─────────────────────────────────────────────
@@ -101,12 +127,13 @@ def _json_to_features(raw: Optional[str]) -> Optional[AudioFeatures]:
 def upsert_track(t: Track, path: Path = DB_PATH) -> None:
     with get_conn(path) as conn:
         conn.execute(
-            """INSERT INTO tracks VALUES (?,?,?,?,?,?,?)
+            """INSERT INTO tracks VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
-                 features_json=excluded.features_json,
-                 preview_url=excluded.preview_url""",
+                 features_json=COALESCE(excluded.features_json, tracks.features_json),
+                 preview_url=COALESCE(excluded.preview_url, tracks.preview_url),
+                 isrc=COALESCE(excluded.isrc, tracks.isrc)""",
             (t.id, t.name, t.artist, t.album, t.duration_ms,
-             _features_to_json(t.features), t.preview_url),
+             _features_to_json(t.features), t.preview_url, t.isrc),
         )
 
 
@@ -120,6 +147,7 @@ def get_track(track_id: str, path: Path = DB_PATH) -> Optional[Track]:
         album=row["album"], duration_ms=row["duration_ms"],
         features=_json_to_features(row["features_json"]),
         preview_url=row["preview_url"],
+        isrc=row["isrc"],
     )
 
 
@@ -229,3 +257,97 @@ def get_played_segments(path: Path = DB_PATH) -> list[dict]:
             WHERE t.features_json IS NOT NULL
         """).fetchall()
     return [dict(r) for r in rows]
+
+
+def clear_played_segments(path: Path = DB_PATH) -> None:
+    """Alignment is recomputed from play_log each time, so start clean."""
+    with get_conn(path) as conn:
+        conn.execute("DELETE FROM played_segments")
+
+
+# ─────────────────────────────────────────────
+# Play log
+# ─────────────────────────────────────────────
+
+def insert_plays(records: list[dict], path: Path = DB_PATH) -> int:
+    """Insert compact play records; returns number of new rows."""
+    rows = [
+        (r["track_id"], r["played_at"],
+         int(datetime.fromisoformat(r["played_at"].replace("Z", "+00:00")).timestamp() * 1000),
+         r["duration_ms"], r.get("name"), r.get("artist"), r.get("album"), r.get("isrc"))
+        for r in records
+    ]
+    with get_conn(path) as conn:
+        before = conn.execute("SELECT COUNT(*) FROM play_log").fetchone()[0]
+        conn.executemany(
+            "INSERT OR IGNORE INTO play_log VALUES (?,?,?,?,?,?,?,?)", rows)
+        after = conn.execute("SELECT COUNT(*) FROM play_log").fetchone()[0]
+    return after - before
+
+
+def get_play_log(path: Path = DB_PATH) -> list[dict]:
+    with get_conn(path) as conn:
+        rows = conn.execute("SELECT * FROM play_log ORDER BY played_at_ms").fetchall()
+    return [dict(r) for r in rows]
+
+
+def prune_play_log(
+    workouts: list[Workout],
+    grace_days: int = 7,
+    margin_min: int = 10,
+    path: Path = DB_PATH,
+) -> int:
+    """
+    Delete plays that don't overlap any run (± margin_min) and are older than
+    grace_days. The grace period protects plays from runs that haven't been
+    uploaded to Strava / synced yet. Returns the number of rows deleted.
+    """
+    now_ms = int(datetime.now().timestamp() * 1000)
+    cutoff_ms = now_ms - grace_days * 86_400_000
+    margin_ms = margin_min * 60_000
+    windows = [
+        (int(w.start_time.timestamp() * 1000) - margin_ms,
+         int(w.start_time.timestamp() * 1000) + w.elapsed_sec * 1000 + margin_ms)
+        for w in workouts
+    ]
+    with get_conn(path) as conn:
+        rows = conn.execute(
+            "SELECT rowid, played_at_ms, duration_ms FROM play_log WHERE played_at_ms < ?",
+            (cutoff_ms,),
+        ).fetchall()
+        doomed = []
+        for r in rows:
+            end, start = r["played_at_ms"], r["played_at_ms"] - r["duration_ms"]
+            if not any(start < w_end and end > w_start for w_start, w_end in windows):
+                doomed.append((r["rowid"],))
+        conn.executemany("DELETE FROM play_log WHERE rowid=?", doomed)
+    return len(doomed)
+
+
+def get_tracks_missing_features(path: Path = DB_PATH) -> list[Track]:
+    with get_conn(path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM tracks WHERE features_json IS NULL"
+        ).fetchall()
+    return [
+        Track(
+            id=r["id"], name=r["name"], artist=r["artist"], album=r["album"],
+            duration_ms=r["duration_ms"], preview_url=r["preview_url"], isrc=r["isrc"],
+        )
+        for r in rows
+    ]
+
+
+def set_track_isrc(track_id: str, isrc: str, path: Path = DB_PATH) -> None:
+    with get_conn(path) as conn:
+        conn.execute(
+            "UPDATE tracks SET isrc=COALESCE(isrc, ?) WHERE id=?", (isrc, track_id)
+        )
+
+
+def set_track_features(track_id: str, features, path: Path = DB_PATH) -> None:
+    with get_conn(path) as conn:
+        conn.execute(
+            "UPDATE tracks SET features_json=? WHERE id=?",
+            (_features_to_json(features), track_id),
+        )

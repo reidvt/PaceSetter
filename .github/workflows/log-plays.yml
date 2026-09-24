@@ -1,0 +1,21 @@
+# Hourly trigger for the Pacesetter play logger on Vercel.
+# (Vercel's free plan only allows daily crons; GitHub Actions fills the gap.)
+# Needs two repo secrets: LOGGER_URL (e.g. https://pacesetter-logger.vercel.app)
+# and CRON_SECRET (same value as in the Vercel project).
+name: log-spotify-plays
+
+on:
+  schedule:
+    - cron: "7 * * * *"      # hourly; 50 plays ≈ 2.5 h of music, so plenty of margin
+  workflow_dispatch: {}
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Trigger logger
+        run: |
+          curl -fsS --max-time 30 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.LOGGER_URL }}/api/plays?action=log"

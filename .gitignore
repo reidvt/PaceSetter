@@ -55,3 +55,10 @@ pacesetter_model.pkl
 *.db-shm
 *.db-wal
 *.db-journal
+
+# Dashboard snapshot (contains GPS routes) — served only behind the password
+cloud/api/_snapshot.json.gz
+
+# ── Local/tooling clutter ──
+.fuse_hidden*
+Claude outputs/

@@ -98,6 +98,11 @@ class AudioFeatures:
     acousticness:   float   # 0–1  (acoustic vs. electronic)
     loudness:       float   # dB  (typically -60 to 0)
     speechiness:    float   # 0–1
+    # Provenance — added for the Deezer/ReccoBeats hybrid pipeline.
+    # Optional with defaults so old rows (all-librosa) still deserialise fine.
+    source:          str = "librosa"          # "reccobeats" | "librosa" | "hybrid"
+    tempo_source:    str = "librosa"          # which source the tempo came from
+    tempo_agree:     Optional[bool] = None    # librosa vs reccobeats tempo agreed (~octave-aware)
 
 
 @dataclass
@@ -109,6 +114,7 @@ class Track:
     duration_ms: int
     features: Optional[AudioFeatures] = None
     preview_url: Optional[str] = None
+    isrc:     Optional[str] = None
 
 
 @dataclass

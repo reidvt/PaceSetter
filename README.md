@@ -40,6 +40,8 @@ Pacesetter learns which music helps you run well on different terrain. It lines 
 | `processing/features.py` | State/action vectors and reward function |
 | `ml/preference_model.py` | k-NN / gradient-boosting preference model |
 | `ml/playlist_generator.py` | Slot-filling playlist builder with discovery mix |
+| `cloud/api/plays.py` | Vercel function: hourly Spotify play logger (Redis buffer) |
+| `data/play_log.py` | Local client for the cloud play buffer |
 
 ## Setup
 
@@ -69,7 +71,43 @@ python main.py train                                       # fit the preference 
 python main.py plan course.gpx --goal 3h45m --name "Race"  # build a playlist
 python main.py plan course.gpx --goal 3h45m --no-push      # preview without touching Spotify
 python main.py stats                                       # model mode + top songs per terrain
+python main.py plays                                       # play-logger status, songs per run
+python main.py align                                       # re-align plays to runs after analyze
 ```
+
+## Play logger (listening history)
+
+Spotify only remembers your last 50 plays. A small serverless function in `cloud/` pulls them every hour and holds them in a short-lived Redis buffer. `python main.py sync` downloads them into the local SQLite `play_log` table and then deletes them from the cloud. Your full history lives only on your machine.
+
+**Storage policy:** plays that don't overlap a Strava run (±10 min) are deleted locally once they're older than 7 days. The 7 days cover runs you haven't uploaded yet. The cloud buffer also drops anything older than 30 days, in case sync isn't run. One play is about 200 bytes.
+
+**Setup (one time):**
+
+1. Vercel → *Add New Project* → import this repo → set **Root Directory** to `cloud`.
+2. In that project: *Storage* → *Create* → **Upstash for Redis** (free tier) → connect it to the project. This adds `KV_REST_API_URL` / `KV_REST_API_TOKEN` automatically.
+3. Add these environment variables to the project:
+   - `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` (same as `.env`)
+   - `SPOTIFY_REFRESH_TOKEN`: print it with `python -m data.play_log --refresh-token`
+   - `CRON_SECRET`: any long random string
+4. Redeploy. Then in GitHub → repo *Settings → Secrets → Actions*, add `LOGGER_URL` (your `https://….vercel.app`) and `CRON_SECRET`. The workflow in `.github/workflows/log-plays.yml` calls the logger hourly. A daily Vercel cron is included as a backup.
+5. Add `PACESETTER_LOGGER_URL` and `PACESETTER_LOGGER_SECRET` to your local `.env`.
+6. Test: `python -m data.play_log --log-now`, then `python main.py plays`.
+
+`python main.py plays` shows how many songs were captured for each recent run and warns if the logger may have missed plays.
+
+## Dashboard (web front end)
+
+`cloud/` also serves a password-protected dashboard: run map with the songs laid over the route (streets or topographic basemap), elevation and pace profiles with song bands, listening stats, music-vs-pace, and an interactive view of the k-NN preference model.
+
+| File | Purpose |
+|---|---|
+| `cloud/index.html`, `cloud/app.js` | Front end (Leaflet + hand-built SVG charts) |
+| `cloud/api/dash.py` | Password-gated data API; merges live plays from the logger's Redis buffer |
+| `scripts/export_dashboard.py` | Builds the snapshot of runs/tracks/plays from `pacesetter.db` |
+
+1. Add `DASHBOARD_PASSWORD` to the Vercel project's environment variables.
+2. `python scripts/export_dashboard.py` writes `cloud/api/_snapshot.json.gz` (git-ignored, because it holds GPS routes). Deploy with `vercel --prod` from `cloud/` to bundle it.
+3. Once Upstash is connected, add `KV_REST_API_URL` / `KV_REST_API_TOKEN` to your local `.env`, then run `python scripts/export_dashboard.py --push` after each `sync`. The dashboard picks up the new snapshot within a minute, with no redeploy.
 
 ## Current progress
 
@@ -93,7 +131,7 @@ python main.py stats                                       # model mode + top so
 ## Roadmap
 
 - [ ] Replace the audio source: local-library scanning (`--local-dir`) as the main path, plus a third-party BPM/key metadata source as a fallback
-- [ ] Log Spotify plays continuously so alignment has more history than the API window gives
+- [x] Log Spotify plays continuously so alignment has more history than the API window gives (`cloud/`, needs deploying)
 - [ ] Run the first end-to-end training pass and check the reward signal
 - [ ] Fix documentation drift and the `STATE_DIM` mismatch
 - [ ] Add unit tests for alignment, course segmentation and goal-time parsing

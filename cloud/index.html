@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Pacesetter</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --seq-lo: #cde2fb; --seq-hi: #104281;
+  --good: #006300; --bad: #d03b3b;
+  --band-a: rgba(42,120,214,0.10); --band-b: rgba(235,104,52,0.10);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --seq-lo: #184f95; --seq-hi: #cde2fb;
+    --good: #0ca30c; --bad: #e66767;
+    --band-a: rgba(57,135,229,0.16); --band-b: rgba(217,89,38,0.16);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--s1); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 64px; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 20px 0 12px; }
+header h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+header .sub { color: var(--muted); font-size: 13px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); font-size: 12px; color: var(--ink-2); background: var(--surface); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: #0ca30c; } .dot.off { background: #fab219; }
+nav { position: sticky; top: 0; z-index: 1000; background: var(--page); display: flex; gap: 4px;
+  padding: 8px 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; }
+nav a { text-decoration: none; color: var(--ink-2); padding: 6px 12px; border-radius: 8px; white-space: nowrap; }
+nav a:hover { background: var(--surface-2); color: var(--ink); }
+section { margin: 0 0 40px; scroll-margin-top: 60px; }
+h2 { font-size: 17px; margin: 0 0 4px; }
+.lede { color: var(--ink-2); margin: 0 0 16px; max-width: 70ch; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.card h3 { font-size: 14px; margin: 0 0 2px; }
+.card .note { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+.grid { display: grid; gap: 16px; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.kpi .v { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.kpi .l { color: var(--ink-2); font-size: 12px; }
+.kpi .s { color: var(--muted); font-size: 12px; }
+.runbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+select, input[type=password], button { font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--axis); border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; }
+button.primary { background: var(--s1); color: #fff; border-color: transparent; }
+.seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: transparent; color: var(--ink-2); }
+.seg button.on { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+#map { height: 440px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); }
+.leaflet-container { font: inherit; }
+svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+svg .ink { fill: var(--ink-2); } svg .ink1 { fill: var(--ink); }
+.tip { position: fixed; pointer-events: none; z-index: 5000; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12); max-width: 260px; display: none; }
+.tip b { font-weight: 600; } .tip .m { color: var(--ink-2); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--grid); padding: 6px 8px; }
+td { border-bottom: 1px solid var(--grid); padding: 6px 8px; font-variant-numeric: tabular-nums; }
+tr.song:hover, tr.song.on { background: var(--surface-2); cursor: pointer; }
+.num { text-align: right; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--axis); border-radius: 10px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; margin: 8px 0 0; align-items: center; }
+.ramp { width: 120px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--seq-lo), var(--seq-hi)); display: inline-block; }
+.ctl { display: grid; grid-template-columns: 130px 1fr 56px; gap: 8px; align-items: center; margin: 6px 0; }
+.ctl label { color: var(--ink-2); font-size: 13px; } .ctl output { text-align: right; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--s1); }
+.progress { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--s1); border-radius: 4px; }
+#login { max-width: 360px; margin: 18vh auto; padding: 0 16px; }
+#login form { display: flex; gap: 8px; margin-top: 16px; } #login input { flex: 1; }
+#login .err { color: var(--bad); font-size: 13px; min-height: 20px; margin-top: 8px; }
+.hidden { display: none !important; }
+.scroll { overflow-x: auto; }
+@media (max-width: 600px) { #map { height: 320px; } .ctl { grid-template-columns: 100px 1fr 48px; } }
+</style>
+</head>
+<body>
+<div id="login">
+  <h1 style="font-size:22px;margin:0">Pacesetter</h1>
+  <p class="lede" style="margin-top:6px">Runs, music and terrain. Enter the dashboard password.</p>
+  <form id="loginForm"><input type="password" id="pw" placeholder="Password" autocomplete="current-password" required>
+  <button class="primary">Open</button></form>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" class="wrap hidden">
+  <header>
+    <h1>Pacesetter</h1>
+    <span class="sub" id="snapInfo"></span>
+    <span class="pill" id="liveInfo"><span class="dot"></span>Logger</span>
+    <span style="flex:1"></span>
+    <button id="logout">Lock</button>
+  </header>
+  <nav>
+    <a href="#overview">Overview</a><a href="#runs">Run map</a><a href="#listening">Listening</a>
+    <a href="#music-perf">Music × pace</a><a href="#model">Model</a>
+  </nav>
+
+  <section id="overview"><div class="kpis" id="kpis"></div></section>
+
+  <section id="runs">
+    <h2>Run map</h2>
+    <p class="lede">Each run on the map, with the songs that played laid over the route. Pick a coloring, or switch to the topographic basemap to see the terrain.</p>
+    <div class="card">
+      <div class="runbar">
+        <select id="runSel" aria-label="Run"></select>
+        <div class="seg" id="colorMode">
+          <button data-m="song" class="on">Songs</button><button data-m="pace">Pace</button><button data-m="ele">Elevation</button>
+        </div>
+        <div class="seg" id="baseMode">
+          <button data-b="street" class="on">Streets</button><button data-b="topo">Topographic</button>
+        </div>
+        <a id="stravaLink" target="_blank" rel="noopener" style="margin-left:auto;font-size:13px">Open in Strava ↗</a>
+      </div>
+      <div id="map"></div>
+      <div class="legend" id="mapLegend"></div>
+    </div>
+    <div class="grid" style="margin-top:16px">
+      <div class="card">
+        <h3>Elevation profile</h3>
+        <p class="note">Elevation (m) by distance. Shaded bands mark each song; hover to see what was playing.</p>
+        <div id="elevChart"></div>
+      </div>
+      <div class="card">
+        <h3>Pace</h3>
+        <p class="note">Pace (min/km) by distance, lower is faster. Dashed line is the run average.</p>
+        <div id="paceChart"></div>
+      </div>
+      <div class="card">
+        <h3>Songs on this run</h3>
+        <p class="note" id="songNote"></p>
+        <div class="scroll" id="songTable"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="listening">
+    <h2>Listening</h2>
+    <p class="lede" id="listenLede"></p>
+    <div class="grid g2">
+      <div class="card"><h3>Top songs</h3><p class="note">Plays captured by the logger</p><div id="topSongs"></div></div>
+      <div class="card"><h3>Top artists</h3><p class="note">Plays captured by the logger</p><div id="topArtists"></div></div>
+      <div class="card"><h3>When you listen</h3><p class="note">Plays by hour of day (your local time). Blue = during a run.</p><div id="byHour"></div><div class="legend"><span><span class="sw" style="background:var(--s1)"></span>During a run</span><span><span class="sw" style="background:var(--axis)"></span>Other</span></div></div>
+      <div class="card"><h3>Most-liked artists</h3><p class="note">Tracks per artist in your Liked Songs library</p><div id="libArtists"></div></div>
+    </div>
+  </section>
+
+  <section id="music-perf">
+    <h2>Music × pace</h2>
+    <p class="lede">How fast you ran while each song played, compared with that run's average pace. This is the signal the model learns from.</p>
+    <div class="grid g2">
+      <div class="card"><h3>Pace vs run average, per song</h3><p class="note">Seconds per km faster (green) or slower (red) than the run average</p><div id="songDelta"></div></div>
+      <div class="card"><h3>Tempo vs pace</h3><p class="note">Each dot is a song played on a run. Songs without audio features are left out.</p><div id="tempoScatter"></div></div>
+    </div>
+  </section>
+
+  <section id="model">
+    <h2>Model: nearest neighbours</h2>
+    <p class="lede">The preference model maps what's happening on the run (grade, how far in) to the audio profile that went well there. With fewer than 20 aligned segments it runs in k-NN mode. Move the query to see which past segments it would lean on and what it would queue.</p>
+    <div class="grid g2">
+      <div class="card">
+        <h3>Run-state space</h3>
+        <p class="note">Each dot is a song segment from a run. Darker = higher reward (pace held closer to the run average). Click the chart to move the query.</p>
+        <div id="knnChart"></div>
+        <div class="legend"><span>Reward</span><span>low</span><span class="ramp"></span><span>high</span><span style="margin-left:12px"><span class="sw" style="background:var(--s2);border-radius:50%"></span>query</span></div>
+      </div>
+      <div class="card">
+        <div class="ctl"><label for="qGrade">Grade</label><input type="range" id="qGrade" min="-6" max="8" step="0.5" value="3"><output id="oGrade"></output></div>
+        <div class="ctl"><label for="qDist">Distance into run</label><input type="range" id="qDist" min="0" max="100" step="1" value="60"><output id="oDist"></output></div>
+        <div class="ctl"><label for="qK">Neighbours (k)</label><input type="range" id="qK" min="1" max="8" step="1" value="3"><output id="oK"></output></div>
+        <h3 style="margin-top:14px">Predicted target sound</h3>
+        <p class="note">Reward- and distance-weighted average of the neighbours' audio features</p>
+        <div id="targetBars"></div>
+        <h3 style="margin-top:14px">It would queue</h3>
+        <p class="note">Library tracks closest to that target</p>
+        <div id="queue"></div>
+        <h3 style="margin-top:14px">Training progress</h3>
+        <p class="note" id="modelNote"></p>
+        <div class="progress"><div id="modelProg"></div></div>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="tip" id="tip"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

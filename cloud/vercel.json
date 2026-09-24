@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "api/dash.py": { "includeFiles": "api/_snapshot.json.gz" }
+  },
+  "rewrites": [
+    { "source": "/api/log", "destination": "/api/plays?action=log" }
+  ],
+  "crons": [
+    { "path": "/api/log", "schedule": "15 4 * * *" }
+  ]
+}
