@@ -18,10 +18,18 @@ import argparse
 import base64
 import gzip
 import os
+import sys
 import urllib.request
 import json
 import sqlite3
 from collections import Counter
+
+# Windows consoles default to cp1252 and choke on the arrow glyph below.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 from datetime import datetime, timezone
 from pathlib import Path
 
