@@ -132,7 +132,7 @@ function init(data) {
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { setBase(); renderAll(); });
 }
 
-function renderAll() { renderKpis(); renderRun(false); renderListening(); renderMusicPerf(); renderModel(); }
+function renderAll() { renderKpis(); renderRace(); renderRun(false); renderListening(); renderMusicPerf(); renderModel(); }
 
 // ───────────────────────── tooltip ─────────────────────────
 const tip = $("#tip");
@@ -443,6 +443,245 @@ function renderMusicPerf() {
     c.addEventListener("mousemove", (ev) => showTip(`<b>${esc(p.name)}</b><div class="m">${esc(p.artist)}</div><div>${p.f.tempo.toFixed(0)} BPM · ${fmtPace(p.pace)}/km · energy ${p.f.energy.toFixed(2)}</div>`, ev));
     c.addEventListener("mouseleave", hideTip);
   });
+}
+
+// ───────────────────────── race countdown + training plan ─────────────────────────
+// Philadelphia Marathon: Sunday before Thanksgiving, 7:00 AM ET start.
+const RACE = { name: "Philadelphia Marathon", date: new Date("2026-11-22T07:00:00-05:00"), km: 42.195 };
+const DAY = 864e5, WEEK = 7 * DAY, MI = 0.621371;
+const addDays = (d, k) => { const x = new Date(d); x.setDate(x.getDate() + k); return x; };
+const mondayOf = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+const fmtHMS = (sec) => { const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.round(sec % 60); return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`; };
+const kmMi = (km) => `${km.toFixed(km < 10 ? 1 : 0)} km <span class="d">(${(km * MI).toFixed(1)} mi)</span>`;
+
+// Where the runner is now, from the logged runs.
+function baseline(runs) {
+  const now = Date.now();
+  const last4 = runs.filter((r) => now - r.date < 28 * DAY);
+  const weekly = last4.reduce((a, r) => a + r.km, 0) / 4;
+  const longest = Math.max(0, ...runs.filter((r) => now - r.date < 42 * DAY).map((r) => r.km));
+  // Riegel projection (t2 = t1 · (d2/d1)^1.06) from the strongest run ≥ 8 km in the last 8 weeks.
+  let pred = null;
+  for (const r of runs) {
+    if (r.km < 8 || now - r.date > 56 * DAY) continue;
+    const sec = r.sec * (RACE.km / r.km) ** 1.06;
+    if (!pred || sec < pred.sec) pred = { sec, from: r };
+  }
+  return { weekly, longest, pred };
+}
+
+// Plan settings are saved server-side (POST /api/dash → Redis) so every device sees the same plan.
+const PLAN_DEFAULTS = { goal_sec: null, runs_per_week: 4, long_day: "sun", peak_cap_km: 32, sessions: {} };
+const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const parseHMS = (s) => {
+  const m = String(s).trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  const sec = +m[1] * 3600 + +m[2] * 60 + +(m[3] || 0);
+  return sec >= 7200 && sec <= 25200 ? sec : null;
+};
+
+// Weekday offsets (Mon = 0) for the non-long runs, by long-run day and runs per week. First is the quality day.
+const LAYOUT = {
+  sun: { 3: [1, 3], 4: [2, 1, 4], 5: [1, 0, 3, 5] },
+  sat: { 3: [1, 3], 4: [1, 0, 3], 5: [1, 0, 2, 4] },
+};
+
+// Long run climbs ≤ 3.2 km/week to the peak cap, peaks two weeks out, with a cutback mid-build;
+// then a two-week taper. Midweek volume grows ~8%/week from the current base.
+function buildPlan(b, cfg) {
+  const w0 = mondayOf(new Date()), raceWk = mondayOf(RACE.date);
+  const n = Math.max(1, Math.round((raceWk - w0) / WEEK) + 1);
+  const goal = cfg.goal_sec || (b.pred && b.pred.sec);
+  const mp = goal ? goal / 60 / RACE.km : 5.6;
+  const P = { easy: mp + 0.6, long: mp + 0.45, mp, tempo: mp - 0.3 };
+  const nBuild = Math.max(0, n - 2);
+  const cut = nBuild >= 5 ? Math.floor(nBuild / 2) : -1;
+  const L0 = Math.max(12, b.longest), STEP = 3.2;
+  const climbs = nBuild - (cut >= 0 ? 1 : 0);
+  const peak = Math.max(L0, Math.min(cfg.peak_cap_km, L0 + STEP * climbs));
+  const step = climbs ? (peak - L0) / climbs : 0;
+  const rpw = cfg.runs_per_week, layout = LAYOUT[cfg.long_day][rpw], longDay = cfg.long_day === "sat" ? 5 : 6;
+  const mid0 = clamp(b.weekly, 18, 40) * { 3: 0.75, 4: 1, 5: 1.15 }[rpw];
+  const q = [
+    (km) => ({ type: "Tempo", desc: `2 km easy · ${Math.max(3, Math.round(km - 4))} km @ ${fmtPace(P.tempo)} · 2 km easy` }),
+    (km) => ({ type: "Hills", desc: `2 km easy · 6–8 × 90 s hard uphill, jog down · rest easy` }),
+    (km) => ({ type: "Marathon pace", desc: `2 km easy · ${Math.max(4, Math.round(km - 3))} km @ ${fmtPace(P.mp)} · 1 km easy` }),
+  ];
+  const easy = { type: "Easy", desc: `Easy @ ${fmtPace(P.easy)}` };
+  const weeks = [];
+  let L = L0, climb = 0;
+  for (let i = 0; i < n; i++) {
+    const start = addDays(w0, 7 * i), out = n - 1 - i;
+    let s, tag = "";
+    if (out === 0) {
+      tag = "Race week";
+      s = [
+        { role: "rw1", dow: 1, km: 8, type: "Easy + strides", desc: `Easy @ ${fmtPace(P.easy)} with 3 × 1.5 km @ ${fmtPace(P.mp)}` },
+        { role: "rw2", dow: 3, km: 5, ...easy },
+        { role: "rw3", dow: 5, km: 3, type: "Shakeout", desc: "Very easy, 4 short strides" },
+        { role: "race", dow: 6, km: RACE.km, type: "Race", desc: `Target ${fmtPace(P.mp)}/km → ${goal ? fmtHMS(goal) : "–"}`, race: true },
+      ];
+    } else {
+      let long, mid;
+      if (out === 1) { long = Math.round(peak * 0.6); mid = mid0 * 0.75; tag = "Taper"; }
+      else if (i === cut) { long = Math.round(L * 0.75); mid = mid0 * (1 + 0.08 * i) * 0.8; tag = "Cutback"; }
+      else { climb++; L = L0 + step * climb; long = Math.round(L); mid = mid0 * (1 + 0.08 * i); if (out === 2) tag = "Peak"; }
+      const qk = Math.round(mid * 0.4), ek = Math.max(5, Math.round((mid * 0.6) / (rpw - 2)));
+      const qs = out === 1 ? { type: "Marathon pace", desc: `2 km easy · 5 km @ ${fmtPace(P.mp)} · 1 km easy` } : q[i % 3](qk);
+      const mpFinish = !tag && climb >= 3 ? ` · last ${Math.min(8, climb + 2)} km @ ${fmtPace(P.mp)}` : "";
+      s = [
+        { role: "q", dow: layout[0], km: qk, ...qs },
+        ...layout.slice(1).map((dow, j) => ({ role: "e" + (j + 1), dow, km: ek, ...easy })),
+        { role: "long", dow: longDay, km: long, type: "Long", desc: `Long @ ${fmtPace(P.long)}${mpFinish}` },
+      ];
+    }
+    // apply saved per-session edits
+    for (const x of s) {
+      x.key = `${isoDay(start)}|${x.role}`;
+      const o = (!x.race && cfg.sessions[x.key]) || {};
+      x.status = o.status || null;
+      x.dowOrig = x.dow;
+      x.moved = o.move != null && o.move !== x.dow;
+      if (o.move != null) x.dow = o.move;
+      x.d = x.race ? RACE.date : addDays(start, x.dow);
+    }
+    s.sort((a, b2) => a.dow - b2.dow);
+    weeks.push({ start, out, sessions: s, tag, km: s.reduce((a, x) => a + (x.status === "skipped" ? 0 : x.km), 0) });
+  }
+  return { weeks, P, peak, n, goal };
+}
+
+// ── settings panel (wired once) ──
+let saveTimer, raceTimer;
+function initPlanSettings() {
+  S.plan = { ...PLAN_DEFAULTS, ...(S.data.plan || {}) };
+  S.plan.sessions = { ...(S.plan.sessions || {}) };
+  const segs = [["#pRpw", "runs_per_week", Number], ["#pLong", "long_day", String]];
+  for (const [sel, key, cast] of segs) {
+    document.querySelectorAll(`${sel} button`).forEach((b) => b.addEventListener("click", () => { S.plan[key] = cast(b.dataset.v); planChanged(); }));
+  }
+  $("#pCap").addEventListener("input", () => { S.plan.peak_cap_km = +$("#pCap").value; planChanged(); });
+  $("#pGoal").addEventListener("change", () => {
+    const v = $("#pGoal").value.trim();
+    if (!v) { S.plan.goal_sec = null; planChanged(); return; }
+    const sec = parseHMS(v);
+    if (sec == null) { saveStatus("Goal must look like 3:55:00 (between 2:00 and 7:00)", true); return; }
+    S.plan.goal_sec = sec; planChanged();
+  });
+  $("#pReset").addEventListener("click", () => { S.plan = { ...PLAN_DEFAULTS, sessions: {} }; planChanged(); });
+  // per-session controls (event delegation; the table is re-rendered on every change)
+  $("#planTable").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-act]"); if (!b) return;
+    const key = b.closest("[data-key]").dataset.key, cur = S.plan.sessions[key] || {};
+    const status = cur.status === b.dataset.act ? undefined : b.dataset.act;
+    setSession(key, { ...cur, status });
+  });
+  $("#planTable").addEventListener("change", (ev) => {
+    const sel = ev.target.closest("select[data-move]"); if (!sel) return;
+    const key = sel.closest("[data-key]").dataset.key, cur = S.plan.sessions[key] || {};
+    const v = +sel.value;
+    setSession(key, { ...cur, move: v === +sel.dataset.orig ? undefined : v });
+  });
+}
+function setSession(key, o) {
+  const clean = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
+  if (Object.keys(clean).length) S.plan.sessions[key] = clean; else delete S.plan.sessions[key];
+  planChanged();
+}
+function saveStatus(msg, err) { const e = $("#planSave"); e.textContent = msg; e.style.color = err ? "var(--bad)" : "var(--muted)"; }
+function planChanged() {
+  renderRace();
+  saveStatus("Saving…");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      const r = await fetch("/api/dash", { method: "POST", cache: "no-store",
+        headers: { Authorization: `Bearer ${store.get("ps_pw")}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: S.plan }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `server error ${r.status}`);
+      saveStatus(`Saved ${new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`);
+    } catch (e) { saveStatus(`Couldn't save: ${e.message}`, true); }
+  }, 700);
+}
+function syncSettingsUI(plan) {
+  const cfg = S.plan;
+  document.querySelectorAll("#pRpw button").forEach((b) => b.classList.toggle("on", +b.dataset.v === cfg.runs_per_week));
+  document.querySelectorAll("#pLong button").forEach((b) => b.classList.toggle("on", b.dataset.v === cfg.long_day));
+  $("#pCap").value = cfg.peak_cap_km; $("#oCap").textContent = cfg.peak_cap_km + " km";
+  if (document.activeElement !== $("#pGoal")) $("#pGoal").value = cfg.goal_sec ? fmtHMS(cfg.goal_sec) : "";
+  $("#pGoal").placeholder = S.base0.pred ? fmtHMS(S.base0.pred.sec) : "4:00:00";
+  $("#goalHint").textContent = cfg.goal_sec ? "Paces use your goal" : "Blank uses the projection";
+}
+
+function renderRace() {
+  if (!S.plan) initPlanSettings();
+  const b = (S.base0 = baseline(S.runs)), plan = buildPlan(b, S.plan);
+  syncSettingsUI(plan);
+  const tick = () => {
+    const ms = Math.max(0, RACE.date - Date.now());
+    const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / 36e5), m = Math.floor((ms % 36e5) / 6e4);
+    const cell = (v, l) => `<div><div class="big">${v}</div><div class="l">${l}</div></div>`;
+    $("#countdown").innerHTML = cell(d, `day${d === 1 ? "" : "s"}`) + cell(h, "hours") + cell(m, "minutes")
+      + cell(plan.goal ? fmtHMS(plan.goal) : "–", `${S.plan.goal_sec ? "goal" : "projected"} finish · ${fmtPace(plan.P.mp)}/km`)
+      + cell(Math.round(plan.peak) + " km", `peak long run (${(plan.peak * MI).toFixed(1)} mi)`);
+  };
+  tick(); clearInterval(raceTimer); raceTimer = setInterval(tick, 30e3);
+
+  $("#raceLede").innerHTML = `Sunday, November 22, 2026 · 7:00 AM ET · ${plan.n} week${plan.n === 1 ? "" : "s"} including race week. `
+    + `The plan starts from your last 4 weeks (${b.weekly.toFixed(0)} km/week, longest run ${b.longest.toFixed(1)} km) and recalculates with every sync.`
+    + (b.pred ? ` Projected finish uses Riegel's formula on your ${b.pred.from.km.toFixed(1)} km run from ${fmtDate(b.pred.from.date)}. It assumes marathon endurance you're still building, so treat it as a ceiling, not a promise.` : "");
+  const reachable = Math.round(Math.max(12, b.longest) + 3.2 * Math.max(0, plan.n - 2 - (plan.n - 2 >= 5 ? 1 : 0)));
+  $("#planNote").innerHTML = `Easy ${fmtPace(plan.P.easy)} · long ${fmtPace(plan.P.long)} · marathon ${fmtPace(plan.P.mp)} · tempo ${fmtPace(plan.P.tempo)} per km. `
+    + (reachable < S.plan.peak_cap_km ? `With ${plan.n} weeks left, the long run tops out at ${Math.round(plan.peak)} km, below your ${S.plan.peak_cap_km} km cap, so it adds no more than 3.2 km a week. ` : "")
+    + `Mark sessions done or skipped, or move them to another day. Skipped runs drop out of the week's total.`;
+
+  const logged = (start) => S.runs.filter((r) => r.date >= start && r.date < addDays(start, 7)).reduce((a, r) => a + r.km, 0);
+  const now = Date.now();
+  const sessHtml = (s) => {
+    const past = s.d < now - DAY && !s.race;
+    const cls = ["sess", s.status || "", past && !s.status ? "past" : ""].join(" ");
+    const moveSel = s.race ? "" : `<select data-move data-orig="${s.dowOrig}" aria-label="Move session">${DOW.map((n2, k) => `<option value="${k}"${k === s.dow ? " selected" : ""}>${n2}</option>`).join("")}</select>`;
+    return `<div class="${cls}" data-key="${s.key}" title="${esc(s.desc)}">
+      <div class="k">${s.race ? "🏁 " : ""}${kmMi(s.km)}</div>
+      <div class="d">${s.race ? "Sun" : DOW[s.dow]} · ${esc(s.type)}${s.moved ? ' <span class="tag">moved</span>' : ""}</div>
+      <div class="d">${esc(s.desc)}</div>
+      ${s.race ? "" : `<div class="acts"><button data-act="done" class="${s.status === "done" ? "on" : ""}" aria-label="Mark done">✓ Done</button><button data-act="skipped" class="${s.status === "skipped" ? "on" : ""}">Skip</button>${moveSel}</div>`}
+    </div>`;
+  };
+  $("#planTable").innerHTML = `<table class="plan"><thead><tr><th>Week</th><th>Sessions</th><th class="num">Plan</th><th class="num">Logged</th></tr></thead><tbody>${
+    plan.weeks.map((w) => {
+      const cur = now >= w.start && now < addDays(w.start, 7);
+      return `<tr class="${cur ? "now" : ""}"><td><b>${fmtDate(w.start)}</b>${w.tag ? `<span class="tag">${w.tag}</span>` : ""}<div class="d">${w.out ? `${w.out} wk out` : "race"}</div></td>
+        <td><div class="sessions">${w.sessions.map(sessHtml).join("")}</div></td>
+        <td class="num">${w.km.toFixed(0)} km</td><td class="num">${w.start <= now ? logged(w.start).toFixed(1) + " km" : "–"}</td></tr>`;
+    }).join("")
+  }</tbody></table>`;
+
+  // weekly volume: last 8 logged weeks + plan weeks
+  const box = $("#volChart"), w0 = mondayOf(new Date());
+  const rows = [];
+  for (let i = 8; i >= 1; i--) { const st = addDays(w0, -7 * i); rows.push({ st, act: logged(st), plan: null }); }
+  plan.weeks.forEach((w) => rows.push({ st: w.start, act: w.start <= now ? logged(w.start) : null, plan: w.km, tag: w.tag }));
+  const { svg, w, h } = svgBox(box, 220);
+  const m = { l: 40, r: 8, t: 12, b: 30 }, iw = w - m.l - m.r, ih = h - m.t - m.b, bw = iw / rows.length;
+  const mx = Math.max(10, ...rows.map((r) => Math.max(r.act || 0, r.plan || 0)));
+  const Y = (v) => m.t + ih - (v / mx) * ih;
+  niceTicks(0, mx, 4).forEach((v) => { el("line", { x1: m.l, x2: w - m.r, y1: Y(v), y2: Y(v), stroke: css("--grid") }, svg); const t = el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg); t.textContent = v; });
+  rows.forEach((r, i) => {
+    const x = m.l + i * bw + 3, bwi = Math.max(3, bw - 6), g = el("g", {}, svg);
+    if (r.act) el("rect", { x, y: Y(r.act), width: bwi, height: m.t + ih - Y(r.act), rx: 3, fill: css("--s1") }, g);
+    if (r.plan) el("rect", { x: x + 0.75, y: Y(r.plan), width: bwi - 1.5, height: m.t + ih - Y(r.plan), rx: 3, fill: "none", stroke: css("--s2"), "stroke-width": 1.5 }, g);
+    if (i % 2 === rows.length % 2 || bw > 44) { const t = el("text", { x: x + bwi / 2, y: h - 12, "text-anchor": "middle" }, svg); t.textContent = fmtDate(r.st); }
+    el("rect", { x: m.l + i * bw, y: m.t, width: bw, height: ih, fill: "transparent" }, g);
+    g.addEventListener("mousemove", (ev) => showTip(`<b>Week of ${fmtDate(r.st)}</b>${r.tag ? `<div class="m">${r.tag}</div>` : ""}${r.act != null ? `<div>Logged ${r.act.toFixed(1)} km</div>` : ""}${r.plan ? `<div>Plan ${r.plan.toFixed(0)} km</div>` : ""}`, ev));
+    g.addEventListener("mouseleave", hideTip);
+  });
+  const rx = m.l + (rows.length - 0.5) * bw;
+  el("line", { x1: rx, x2: rx, y1: m.t, y2: m.t + ih, stroke: css("--ink-2"), "stroke-dasharray": "3 3" }, svg);
+  const rt = el("text", { x: rx - 4, y: m.t + 10, "text-anchor": "end", class: "ink" }, svg); rt.textContent = "Race";
+  el("line", { x1: m.l, x2: w - m.r, y1: m.t + ih, y2: m.t + ih, stroke: css("--axis") }, svg);
 }
 
 // ───────────────────────── k-NN model ─────────────────────────

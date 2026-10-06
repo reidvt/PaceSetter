@@ -91,6 +91,26 @@ input[type=range] { width: 100%; accent-color: var(--s1); }
 #login { max-width: 360px; margin: 18vh auto; padding: 0 16px; }
 #login form { display: flex; gap: 8px; margin-top: 16px; } #login input { flex: 1; }
 #login .err { color: var(--bad); font-size: 13px; min-height: 20px; margin-top: 8px; }
+.countdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; align-items: end; }
+.countdown .big { font-size: 44px; font-weight: 650; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.countdown .l { color: var(--ink-2); font-size: 12px; margin-top: 4px; }
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.fld { display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: 13px; }
+.fld .d { color: var(--muted); font-size: 12px; }
+input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 10px; max-width: 140px; }
+.plan td { vertical-align: top; }
+.plan .k { font-weight: 600; } .plan .d { color: var(--ink-2); font-size: 12px; }
+.plan tr.now > td { background: var(--surface-2); }
+.sessions { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; min-width: 300px; }
+.sess { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--surface); }
+.sess.past { opacity: 0.6; }
+.sess.done { border-color: var(--good); box-shadow: inset 3px 0 0 var(--good); }
+.sess.skipped { opacity: 0.5; } .sess.skipped .k { text-decoration: line-through; }
+.acts { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.acts button, .acts select { font-size: 12px; padding: 2px 7px; border-radius: 6px; }
+.acts button.on[data-act=done] { background: var(--good); color: #fff; border-color: transparent; }
+.acts button.on[data-act=skipped] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+.tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); margin-left: 4px; }
 .hidden { display: none !important; }
 .scroll { overflow-x: auto; }
 @media (max-width: 600px) { #map { height: 320px; } .ctl { grid-template-columns: 100px 1fr 48px; } }
@@ -114,11 +134,41 @@ input[type=range] { width: 100%; accent-color: var(--s1); }
     <button id="logout">Lock</button>
   </header>
   <nav>
-    <a href="#overview">Overview</a><a href="#runs">Run map</a><a href="#listening">Listening</a>
+    <a href="#overview">Overview</a><a href="#race">Philly</a><a href="#runs">Run map</a><a href="#listening">Listening</a>
     <a href="#music-perf">Music × pace</a><a href="#model">Model</a>
   </nav>
 
   <section id="overview"><div class="kpis" id="kpis"></div></section>
+
+  <section id="race">
+    <h2>Philadelphia Marathon</h2>
+    <p class="lede" id="raceLede"></p>
+    <div class="countdown card" id="countdown"></div>
+    <div class="grid" style="margin-top:16px">
+      <div class="card">
+        <h3>Weekly distance</h3>
+        <p class="note">Logged km per week (solid) and the plan's target (outline). Hover a bar for details.</p>
+        <div id="volChart"></div>
+        <div class="legend"><span><span class="sw" style="background:var(--s1)"></span>Logged</span><span><span class="sw" style="border:1.5px solid var(--s2);background:transparent"></span>Plan</span></div>
+      </div>
+      <div class="card">
+        <h3>Plan settings</h3>
+        <p class="note">Saved to the dashboard, so every device sees the same plan. <span id="planSave"></span></p>
+        <div class="settings">
+          <label class="fld">Goal finish<input id="pGoal" inputmode="numeric" size="8" aria-describedby="goalHint"><span class="d" id="goalHint"></span></label>
+          <div class="fld">Runs per week<div class="seg" id="pRpw"><button data-v="3">3</button><button data-v="4">4</button><button data-v="5">5</button></div></div>
+          <div class="fld">Long run day<div class="seg" id="pLong"><button data-v="sat">Sat</button><button data-v="sun">Sun</button></div></div>
+          <div class="fld">Peak long-run cap<div style="display:flex;gap:8px;align-items:center"><input type="range" id="pCap" min="16" max="36" step="1"><output id="oCap" style="min-width:44px"></output></div></div>
+          <div class="fld" style="justify-content:flex-end"><button id="pReset">Reset to defaults</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Training plan</h3>
+        <p class="note" id="planNote"></p>
+        <div class="scroll" id="planTable"></div>
+      </div>
+    </div>
+  </section>
 
   <section id="runs">
     <h2>Run map</h2>

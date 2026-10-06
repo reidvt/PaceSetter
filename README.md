@@ -99,6 +99,8 @@ Spotify only remembers your last 50 plays. A small serverless function in `cloud
 
 `cloud/` also serves a password-protected dashboard: run map with the songs laid over the route (streets or topographic basemap), elevation and pace profiles with song bands, listening stats, music-vs-pace, and an interactive view of the k-NN preference model.
 
+It also has a Philadelphia Marathon section (Nov 22, 2026): a countdown, a Riegel-projected finish time, and a training plan built in the browser from your logged runs. The plan has four runs a week, adds no more than 3.2 km a week to the long run up to a 32 km cap, includes a mid-build cutback, and finishes with a two-week taper. It recalculates whenever the snapshot updates. You can edit the plan on the page: goal time, runs per week (3–5), long-run day, peak cap, and marking each session done, skipped or moved. `POST /api/dash` validates those settings and saves them in Redis (`pacesetter:plan`), so every device shows the same plan.
+
 | File | Purpose |
 |---|---|
 | `cloud/index.html`, `cloud/app.js` | Front end (Leaflet + hand-built SVG charts) |
