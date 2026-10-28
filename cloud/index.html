@@ -14,8 +14,10 @@
   --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
   --seq-lo: #cde2fb; --seq-hi: #104281;
+  --div-neg: #2a78d6; --div-mid: #b5b4ad; --div-pos: #e34948;
   --good: #006300; --bad: #d03b3b;
-  --band-a: rgba(42,120,214,0.10); --band-b: rgba(235,104,52,0.10);
+  --band-a: rgba(11,11,11,0.045); --band-b: rgba(11,11,11,0);
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -25,11 +27,14 @@
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
     --s1: #3987e5; --s2: #d95926; --s3: #199e70;
     --seq-lo: #184f95; --seq-hi: #cde2fb;
+    --div-neg: #3987e5; --div-mid: #5a5955; --div-pos: #e66767;
     --good: #0ca30c; --bad: #e66767;
-    --band-a: rgba(57,135,229,0.16); --band-b: rgba(217,89,38,0.16);
+    --band-a: rgba(255,255,255,0.05); --band-b: rgba(255,255,255,0);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
   }
 }
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--page); color: var(--ink);
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 a { color: var(--s1); }
@@ -41,29 +46,64 @@ header .sub { color: var(--muted); font-size: 13px; }
   border: 1px solid var(--border); font-size: 12px; color: var(--ink-2); background: var(--surface); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .dot.on { background: #0ca30c; } .dot.off { background: #fab219; }
-nav { position: sticky; top: 0; z-index: 1000; background: var(--page); display: flex; gap: 4px;
+nav { position: sticky; top: 0; z-index: 1000; background: color-mix(in srgb, var(--page) 88%, transparent);
+  backdrop-filter: blur(8px); display: flex; gap: 4px;
   padding: 8px 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; }
-nav a { text-decoration: none; color: var(--ink-2); padding: 6px 12px; border-radius: 8px; white-space: nowrap; }
+nav a { text-decoration: none; color: var(--ink-2); padding: 6px 12px; border-radius: 8px; white-space: nowrap; transition: background .15s, color .15s; }
 nav a:hover { background: var(--surface-2); color: var(--ink); }
-section { margin: 0 0 40px; scroll-margin-top: 60px; }
-h2 { font-size: 17px; margin: 0 0 4px; }
-.lede { color: var(--ink-2); margin: 0 0 16px; max-width: 70ch; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+nav a.on { background: var(--ink); color: var(--page); }
+section { margin: 0 0 44px; scroll-margin-top: 60px; }
+h2 { font-size: 18px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.lede { color: var(--ink-2); margin: 0 0 16px; max-width: 72ch; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); min-width: 0; }
 .card h3 { font-size: 14px; margin: 0 0 2px; }
 .card .note { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+.card-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; justify-content: space-between; margin-bottom: 8px; }
 .grid { display: grid; gap: 16px; }
 .g2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); }
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
-.kpi .v { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 16px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; transition: transform .15s, border-color .15s; }
+.kpi.link { cursor: pointer; } .kpi.link:hover { transform: translateY(-2px); border-color: var(--axis); }
+.kpi .v { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .v.sm { font-size: 17px; line-height: 1.3; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .kpi .l { color: var(--ink-2); font-size: 12px; }
 .kpi .s { color: var(--muted); font-size: 12px; }
+.kpi svg { margin-top: 6px; }
+.chg { font-size: 12px; font-weight: 600; }
+.chg.up { color: var(--good); } .chg.down { color: var(--bad); }
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.hero .card { padding: 20px; }
+.hero-top { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; }
+.eyebrow { color: var(--ink-2); font-size: 13px; }
+.eyebrow b { color: var(--ink); }
+.hero-main { display: flex; gap: 12px 40px; flex-wrap: wrap; align-items: flex-end; margin: 10px 0 14px; }
+.hero-fig { font-size: 64px; font-weight: 700; letter-spacing: -0.04em; line-height: .95; }
+.hero-fig small { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink-2); margin-left: 4px; }
+.hero-stats { display: flex; gap: 10px 28px; flex-wrap: wrap; }
+.hero-stats div { display: flex; flex-direction: column; }
+.hero-stats .v { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
+.hero-stats .l { color: var(--muted); font-size: 12px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--border); }
+.badge .ic { font-size: 11px; }
+.badge.good .ic { color: var(--good); } .badge.bad .ic { color: var(--bad); }
+.callouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; margin: 0 0 14px; }
+.callout { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); min-width: 0; cursor: pointer; transition: transform .15s; }
+.callout:hover { transform: translateY(-1px); }
+.callout .ic { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--surface); font-size: 15px; }
+.callout .k { color: var(--muted); font-size: 12px; }
+.callout .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.callout .a { color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.callout > div:last-child { min-width: 0; }
 .runbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
 select, input[type=password], button { font: inherit; color: var(--ink); background: var(--surface);
   border: 1px solid var(--axis); border-radius: 8px; padding: 6px 10px; }
+select { max-width: 100%; }
 button { cursor: pointer; }
 button.primary { background: var(--s1); color: #fff; border-color: transparent; }
-.seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
+.seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; flex: none; }
 .seg button { border: 0; border-radius: 0; background: transparent; color: var(--ink-2); }
 .seg button.on { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 #map { height: 440px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); }
@@ -78,22 +118,36 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--grid); padding: 6px 8px; }
 td { border-bottom: 1px solid var(--grid); padding: 6px 8px; font-variant-numeric: tabular-nums; }
 tr.song:hover, tr.song.on { background: var(--surface-2); cursor: pointer; }
+tr.song.now td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
 .num { text-align: right; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--axis); border-radius: 10px; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; margin: 8px 0 0; align-items: center; }
 .ramp { width: 120px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--seq-lo), var(--seq-hi)); display: inline-block; }
+.ramp.div { background: linear-gradient(90deg, var(--div-neg), var(--div-mid), var(--div-pos)); }
 .ctl { display: grid; grid-template-columns: 130px 1fr 56px; gap: 8px; align-items: center; margin: 6px 0; }
 .ctl label { color: var(--ink-2); font-size: 13px; } .ctl output { text-align: right; font-variant-numeric: tabular-nums; }
 input[type=range] { width: 100%; accent-color: var(--s1); }
 .progress { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
-.progress > div { height: 100%; background: var(--s1); border-radius: 4px; }
+.progress > div { height: 100%; background: var(--s1); border-radius: 4px; transition: width .8s cubic-bezier(.2,.7,.2,1); }
 #login { max-width: 360px; margin: 18vh auto; padding: 0 16px; }
 #login form { display: flex; gap: 8px; margin-top: 16px; } #login input { flex: 1; }
 #login .err { color: var(--bad); font-size: 13px; min-height: 20px; margin-top: 8px; }
-.countdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; align-items: end; }
-.countdown .big { font-size: 44px; font-weight: 650; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+/* race */
+.countdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 16px; align-items: end; }
+.countdown .big { font-size: 48px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.countdown .mid { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .countdown .l { color: var(--ink-2); font-size: 12px; margin-top: 4px; }
+.ready { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--grid); }
+.ready-h { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); margin-bottom: 8px; }
+.ready-h b { color: var(--ink); }
+.bullet { position: relative; height: 14px; border-radius: 7px; background: var(--surface-2); }
+.bullet .plan { position: absolute; inset: 0 auto 0 0; border-radius: 7px; background: var(--seq-lo); }
+.bullet .fill { position: absolute; inset: 0 auto 0 0; border-radius: 7px; background: var(--s1); width: 0; transition: width 1s cubic-bezier(.2,.7,.2,1); }
+.bullet .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); border-radius: 1px; }
+.bullet-ax { position: relative; height: 16px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.bullet-ax span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.bullet-ax span:first-child { transform: none; } .bullet-ax span:last-child { transform: translateX(-100%); }
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
 .fld { display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: 13px; }
 .fld .d { color: var(--muted); font-size: 12px; }
@@ -111,9 +165,48 @@ input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--s
 .acts button.on[data-act=done] { background: var(--good); color: #fff; border-color: transparent; }
 .acts button.on[data-act=skipped] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); margin-left: 4px; }
+/* replay */
+.replay { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin: 12px 0 0; }
+.playbtn { width: 40px; height: 40px; border-radius: 50%; padding: 0; display: grid; place-items: center; background: var(--ink); color: var(--page); border: 0; font-size: 15px; }
+.playbtn:hover { transform: scale(1.05); }
+.np { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; margin-top: 12px;
+  padding: 12px 14px; border-radius: 12px; background: var(--surface-2); }
+.np.flash { animation: flash .6s ease-out; }
+.eq { width: 36px; height: 36px; border-radius: 8px; background: var(--surface); display: flex; gap: 3px; align-items: flex-end; justify-content: center; padding: 8px 7px; }
+.eq i { display: block; width: 4px; height: 30%; border-radius: 2px; background: var(--muted); }
+.np.playing .eq i { background: var(--s1); animation: eq .9s ease-in-out infinite; }
+.np.playing .eq i:nth-child(2) { animation-delay: -.3s; } .np.playing .eq i:nth-child(3) { animation-delay: -.6s; } .np.playing .eq i:nth-child(4) { animation-delay: -.15s; }
+.np-body { min-width: 0; }
+.np .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.np .t { font-weight: 650; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np .a { color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-stats { display: flex; gap: 16px; font-variant-numeric: tabular-nums; }
+.np-stats div { display: flex; flex-direction: column; align-items: flex-end; }
+.np-stats b { font-size: 15px; } .np-stats span { color: var(--muted); font-size: 11px; }
 .hidden { display: none !important; }
 .scroll { overflow-x: auto; }
-@media (max-width: 600px) { #map { height: 320px; } .ctl { grid-template-columns: 100px 1fr 48px; } }
+.click { cursor: pointer; }
+@keyframes eq { 0%, 100% { height: 25%; } 50% { height: 100%; } }
+@keyframes flash { from { box-shadow: 0 0 0 3px var(--s1); } to { box-shadow: 0 0 0 0 transparent; } }
+@keyframes growY { from { transform: scaleY(0); } }
+@keyframes growX { from { transform: scaleX(0); } }
+@keyframes pop { from { transform: scale(0); } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  svg .ay { transform-box: fill-box; transform-origin: 50% 100%; animation: growY .7s cubic-bezier(.2,.7,.2,1) both; }
+  svg .ax { transform-box: fill-box; transform-origin: 0 50%; animation: growX .7s cubic-bezier(.2,.7,.2,1) both; }
+  svg .axr { transform-box: fill-box; transform-origin: 100% 50%; animation: growX .7s cubic-bezier(.2,.7,.2,1) both; }
+  svg .ap { transform-box: fill-box; transform-origin: 50% 50%; animation: pop .5s cubic-bezier(.2,.7,.2,1.3) both; }
+  svg .draw { animation: draw 1.2s ease-out forwards; }
+  .intro .card, .intro .kpi { animation: rise .5s ease-out both; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .np.playing .eq i { animation: none; height: 70%; } }
+@media (max-width: 600px) {
+  #map { height: 320px; } .ctl { grid-template-columns: 100px 1fr 48px; }
+  .hero-fig { font-size: 52px; } .np { grid-template-columns: auto minmax(0, 1fr); } .np-stats { grid-column: 1 / -1; justify-content: space-between; }
+  .np-stats div { align-items: flex-start; }
+}
 </style>
 </head>
 <body>
@@ -131,23 +224,32 @@ input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--s
     <span class="sub" id="snapInfo"></span>
     <span class="pill" id="liveInfo"><span class="dot"></span>Logger</span>
     <span style="flex:1"></span>
+    <div class="seg" id="unitSel" role="group" aria-label="Units"><button data-u="km">km</button><button data-u="mi">mi</button></div>
     <button id="logout">Lock</button>
   </header>
-  <nav>
-    <a href="#overview">Overview</a><a href="#race">Philly</a><a href="#runs">Run map</a><a href="#listening">Listening</a>
-    <a href="#music-perf">Music × pace</a><a href="#model">Model</a>
+  <nav id="nav">
+    <a href="#latest">Latest run</a><a href="#race">Philly</a><a href="#trends">Trends</a><a href="#runs">Run replay</a>
+    <a href="#listening">Listening</a><a href="#music-perf">Music × pace</a><a href="#model">Model</a>
   </nav>
 
-  <section id="overview"><div class="kpis" id="kpis"></div></section>
+  <section id="latest">
+    <div class="hero">
+      <div class="card" id="heroCard"></div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </section>
 
   <section id="race">
     <h2>Philadelphia Marathon</h2>
     <p class="lede" id="raceLede"></p>
-    <div class="countdown card" id="countdown"></div>
+    <div class="card">
+      <div class="countdown" id="countdown"></div>
+      <div class="ready" id="ready"></div>
+    </div>
     <div class="grid" style="margin-top:16px">
       <div class="card">
         <h3>Weekly distance</h3>
-        <p class="note">Logged km per week (solid) and the plan's target (outline). Hover a bar for details.</p>
+        <p class="note">Logged distance per week (solid) and the plan's target (outline). Hover a bar for details.</p>
         <div id="volChart"></div>
         <div class="legend"><span><span class="sw" style="background:var(--s1)"></span>Logged</span><span><span class="sw" style="border:1.5px solid var(--s2);background:transparent"></span>Plan</span></div>
       </div>
@@ -158,7 +260,7 @@ input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--s
           <label class="fld">Goal finish<input id="pGoal" inputmode="numeric" size="8" aria-describedby="goalHint"><span class="d" id="goalHint"></span></label>
           <div class="fld">Runs per week<div class="seg" id="pRpw"><button data-v="3">3</button><button data-v="4">4</button><button data-v="5">5</button></div></div>
           <div class="fld">Long run day<div class="seg" id="pLong"><button data-v="sat">Sat</button><button data-v="sun">Sun</button></div></div>
-          <div class="fld">Peak long-run cap<div style="display:flex;gap:8px;align-items:center"><input type="range" id="pCap" min="16" max="36" step="1"><output id="oCap" style="min-width:44px"></output></div></div>
+          <div class="fld">Peak long-run cap<div style="display:flex;gap:8px;align-items:center"><input type="range" id="pCap" min="16" max="36" step="1"><output id="oCap" style="min-width:90px"></output></div></div>
           <div class="fld" style="justify-content:flex-end"><button id="pReset">Reset to defaults</button></div>
         </div>
       </div>
@@ -170,9 +272,30 @@ input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--s
     </div>
   </section>
 
+  <section id="trends">
+    <h2>Trends</h2>
+    <p class="lede">Every synced run. Click a day or a dot to replay that run below.</p>
+    <div class="grid g2">
+      <div class="card">
+        <h3>Activity calendar</h3>
+        <p class="note" id="calNote"></p>
+        <div id="calendar"></div>
+        <div class="legend"><span>Less</span><span class="ramp"></span><span>More distance</span></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Run history</h3><p class="note" style="margin:0" id="histNote"></p></div>
+          <div class="seg" id="histMode"><button data-h="km" class="on">Distance</button><button data-h="pace">Pace</button><button data-h="sec">Time</button></div>
+        </div>
+        <div id="histChart"></div>
+        <div class="legend"><span><span class="sw" style="background:var(--s1);border-radius:50%"></span>Run</span><span><span class="sw" style="background:var(--s2);height:3px;vertical-align:3px"></span>5-run average</span><span><span class="sw" style="border:2px solid var(--ink);border-radius:50%;background:transparent"></span>Selected</span></div>
+      </div>
+    </div>
+  </section>
+
   <section id="runs">
-    <h2>Run map</h2>
-    <p class="lede">Each run on the map, with the songs that played laid over the route. Pick a coloring, or switch to the topographic basemap to see the terrain.</p>
+    <h2>Run replay</h2>
+    <p class="lede">Each run on the map, with every song colored by how fast you ran while it played. Press play to replay the run with its soundtrack, or drag the slider to scrub.</p>
     <div class="card">
       <div class="runbar">
         <select id="runSel" aria-label="Run"></select>
@@ -186,16 +309,26 @@ input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--s
       </div>
       <div id="map"></div>
       <div class="legend" id="mapLegend"></div>
+      <div class="replay">
+        <button class="playbtn" id="playBtn" aria-label="Play replay">▶</button>
+        <input type="range" id="scrub" min="0" max="100" step="1" value="0" aria-label="Replay position">
+        <div class="seg" id="speedSel" aria-label="Replay speed"><button data-s="30">30×</button><button data-s="60" class="on">60×</button><button data-s="120">120×</button></div>
+      </div>
+      <div class="np" id="nowPlaying"></div>
+      <div style="margin-top:14px">
+        <h3 style="font-size:13px;margin:0 0 6px">Soundtrack</h3>
+        <div id="runRibbon"></div>
+      </div>
     </div>
     <div class="grid" style="margin-top:16px">
       <div class="card">
         <h3>Elevation profile</h3>
-        <p class="note">Elevation (m) by distance. Shaded bands mark each song; hover to see what was playing.</p>
+        <p class="note">Elevation (m) by distance. Shaded bands mark each song; hover to scrub the map.</p>
         <div id="elevChart"></div>
       </div>
       <div class="card">
         <h3>Pace</h3>
-        <p class="note">Pace (min/km) by distance, lower is faster. Dashed line is the run average.</p>
+        <p class="note">Pace by distance, faster is higher. Dashed line is the run average.</p>
         <div id="paceChart"></div>
       </div>
       <div class="card">
@@ -212,17 +345,24 @@ input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--s
     <div class="grid g2">
       <div class="card"><h3>Top songs</h3><p class="note">Plays captured by the logger</p><div id="topSongs"></div></div>
       <div class="card"><h3>Top artists</h3><p class="note">Plays captured by the logger</p><div id="topArtists"></div></div>
-      <div class="card"><h3>When you listen</h3><p class="note">Plays by hour of day (your local time). Blue = during a run.</p><div id="byHour"></div><div class="legend"><span><span class="sw" style="background:var(--s1)"></span>During a run</span><span><span class="sw" style="background:var(--axis)"></span>Other</span></div></div>
+      <div class="card"><h3>When you listen</h3><p class="note">Plays by hour of day (your local time)</p><div id="byHour"></div><div class="legend"><span><span class="sw" style="background:var(--s1)"></span>During a run</span><span><span class="sw" style="background:var(--axis)"></span>Other</span></div></div>
       <div class="card"><h3>Most-liked artists</h3><p class="note">Tracks per artist in your Liked Songs library</p><div id="libArtists"></div></div>
     </div>
   </section>
 
   <section id="music-perf">
     <h2>Music × pace</h2>
-    <p class="lede">How fast you ran while each song played, compared with that run's average pace. This is the signal the model learns from.</p>
+    <p class="lede">How fast you ran while each song played, compared with that run's average pace, averaged over every run the song played on. This is the signal the model learns from.</p>
     <div class="grid g2">
-      <div class="card"><h3>Pace vs run average, per song</h3><p class="note">Seconds per km faster (green) or slower (red) than the run average</p><div id="songDelta"></div></div>
-      <div class="card"><h3>Tempo vs pace</h3><p class="note">Each dot is a song played on a run. Songs without audio features are left out.</p><div id="tempoScatter"></div></div>
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Songs ranked by pace</h3><p class="note" style="margin:0" id="deltaNote"></p></div>
+          <div class="seg" id="deltaMode"><button data-d="fast" class="on">Power songs</button><button data-d="slow">Drag songs</button><button data-d="most">Most run to</button></div>
+        </div>
+        <div id="songDelta"></div>
+      </div>
+      <div class="card"><h3>Tempo vs pace</h3><p class="note">Each dot is a song played on a run, colored by its pace versus the run average. Hollow dots at the bottom are off the scale (usually a stop). Songs without audio features are left out.</p><div id="tempoScatter"></div>
+        <div class="legend"><span>Faster</span><span class="ramp div"></span><span>Slower than run average</span></div></div>
     </div>
   </section>
 
@@ -232,7 +372,7 @@ input[type=text], #pGoal { font: inherit; color: var(--ink); background: var(--s
     <div class="grid g2">
       <div class="card">
         <h3>Run-state space</h3>
-        <p class="note">Each dot is a song segment from a run. Darker = higher reward (pace held closer to the run average). Click the chart to move the query.</p>
+        <p class="note">Each dot is a song segment from a run, colored by reward (pace held closer to the run average). Click the chart to move the query.</p>
         <div id="knnChart"></div>
         <div class="legend"><span>Reward</span><span>low</span><span class="ramp"></span><span>high</span><span style="margin-left:12px"><span class="sw" style="background:var(--s2);border-radius:50%"></span>query</span></div>
       </div>
